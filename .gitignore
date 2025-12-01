@@ -1,0 +1,4 @@
+data/Covid/Covid_design/*
+esm_embeddings/*
+outputs/Covid*
+release_data/*
