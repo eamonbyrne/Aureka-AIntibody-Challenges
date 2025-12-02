@@ -7,7 +7,7 @@ pip3 install aurabind
 ## Download
 
 ```bash
-wget "https://zenodo.org/records/17541122/files/Covid-design-10.pt?download=1" -O outputs/Covid-design-10.pt
+wget "https://zenodo.org/records/17784985/files/Covid-design-10.pt?download=1" -O outputs/Covid-design-10.pt
 ```
 
 ## 🚀 Inference
