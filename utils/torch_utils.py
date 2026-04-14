@@ -384,7 +384,9 @@ def pad_features_batch(features, token_pad, atom_pad, token_len, atom_len):
         features[key] = pad_1d_tensor(features[key], pad_tensor)
     features['token_index'] = pad_1d_tensor(features['token_index'], torch.arange(token_pad) + features['token_index'].max() + 1)
 
-    token_2d_features = ['restype', 'frame_atom_index', 'esm_token_embedding']
+    token_2d_features = ['restype', 'frame_atom_index']
+    if 'esm_token_embedding' in features:
+        token_2d_features.append('esm_token_embedding')
     for key in token_2d_features:
         features[key] = pad_2d_tensor(features[key], token_pad)
     # 处理token_bonds

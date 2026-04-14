@@ -223,10 +223,13 @@ def download_infercence_cache(configs: Any) -> None:
         if not opexists(cur_cache_fpath):
             os.makedirs(os.path.dirname(cur_cache_fpath), exist_ok=True)
             tos_url = URL[cache_name]
-            assert os.path.basename(tos_url) == os.path.basename(cur_cache_fpath), (
-                f"{cache_name} file name is incorrect, `{tos_url}` and "
-                f"`{cur_cache_fpath}`. Please check and try again."
-            )
+            if os.path.basename(tos_url) != os.path.basename(cur_cache_fpath):
+                logger.warning(
+                    "Downloading %s from %s into %s despite filename mismatch.",
+                    cache_name,
+                    tos_url,
+                    cur_cache_fpath,
+                )
             logger.info(
                 f"Downloading data cache from\n {tos_url}... to {cur_cache_fpath}"
             )

@@ -98,6 +98,11 @@ class DistilledDataset(Dataset):
         else:
             raise ValueError(f"Input path {input_json_path} is neither a file nor a directory")
 
+        max_samples = getattr(self.configs, "max_samples", -1) if self.configs else -1
+        if max_samples is not None and max_samples > 0:
+            self.all_inputs = self.all_inputs[:max_samples]
+            self.all_labels = self.all_labels[:max_samples]
+
         if self.all_inputs and self.configs:
             json_task_name = os.path.basename(input_json_path)
             esm_info = configs.get("esm", {})

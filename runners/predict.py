@@ -1,5 +1,7 @@
 import os
 import time
+import urllib.request
+import importlib.util
 # import wandb
 import torch
 import datetime
@@ -30,9 +32,10 @@ from utils.seed import seed_everything
 from datasets.dataloader import get_dataloader
 from models.model import DistilledBinder
 from os.path import exists as opexists
+from web_service.dependency_url import URL
 
 
-def download_infercence_cache(configs: Any) -> None:
+def download_inference_cache(configs: Any) -> None:
     def progress_callback(block_num, block_size, total_size):
         downloaded = block_num * block_size
         percent = min(100, downloaded * 100 / total_size)
@@ -70,10 +73,13 @@ def download_infercence_cache(configs: Any) -> None:
         if not opexists(cur_cache_fpath):
             os.makedirs(os.path.dirname(cur_cache_fpath), exist_ok=True)
             tos_url = URL[cache_name]
-            assert os.path.basename(tos_url) == os.path.basename(cur_cache_fpath), (
-                f"{cache_name} file name is incorrect, `{tos_url}` and "
-                f"`{cur_cache_fpath}`. Please check and try again."
-            )
+            if os.path.basename(tos_url) != os.path.basename(cur_cache_fpath):
+                logger.warning(
+                    "Downloading %s from %s into %s despite filename mismatch.",
+                    cache_name,
+                    tos_url,
+                    cur_cache_fpath,
+                )
             logger.info(
                 f"Downloading data cache from\n {tos_url}... to {cur_cache_fpath}"
             )
@@ -312,7 +318,7 @@ class Trainer(object):
         self.predict_dl = get_dataloader(
             self.configs,
             batchsize=self.configs.batchsize, 
-            shuffle=True, 
+            shuffle=False, 
             input_json_path=self.configs.predict_json_path, 
             mode="predict",
         )
@@ -374,7 +380,13 @@ class Trainer(object):
             if not load_params_only:
                 if not skip_load_optimizer:
                     self.print(f"Loading optimizer state")
-                    self.optimizer.load_state_dict(checkpoint["optimizer"])
+                    try:
+                        self.optimizer.load_state_dict(checkpoint["optimizer"])
+                    except (KeyError, ValueError) as exc:
+                        self.print(
+                            f"Skipping optimizer state load due to checkpoint mismatch: {exc}"
+                        )
+                        skip_load_optimizer = True
                 if not skip_load_step:
                     self.print(f"Loading checkpoint step")
                     self.step = checkpoint["step"] + 1
@@ -459,23 +471,36 @@ class Trainer(object):
         assert mode in ['predict']
         if mode == 'predict':
             dls = self.predict_dl
+
+        eval_precision = {
+            "fp32": torch.float32,
+            "bf16": torch.bfloat16,
+            "fp16": torch.float16,
+        }[self.configs.dtype]
+        enable_amp = (
+            torch.autocast(device_type="cuda", dtype=eval_precision)
+            if torch.cuda.is_available() and self.configs.dtype != "fp32"
+            else nullcontext()
+        )
         
         predictions = []
-        prediction_dict = {}  # 每个进程本地的预测字典
+        prediction_dict = {}  # 每个进程本地的预测字典 i.e. {name: prediction}
+
+        with torch.inference_mode():
+            for batch in tqdm(dls, disable=(DIST_WRAPPER.rank != 0)):
+                batch = to_device(batch, self.device)
+                with enable_amp:
+                    batch = self.model_forward(batch, mode="eval")
+                
+                predictions.append(batch["pred_dict"].detach())
+                
+                # 记录当前进程处理的样本预测 i.e. prediction_dict[name] = prediction
+                for idx, name in enumerate(batch["sample_name"]):
+                    prediction_dict[name] = batch["pred_dict"][idx].detach().cpu().numpy()
         
-        for batch in tqdm(dls, disable=(DIST_WRAPPER.rank != 0)):
-            batch = to_device(batch, self.device)
-            batch = self.model_forward(batch, mode="eval")
-            
-            predictions.append(batch["pred_dict"].detach())
-            
-            # 记录当前进程处理的样本预测
-            for idx, name in enumerate(batch["sample_name"]):
-                prediction_dict[name] = batch["pred_dict"][idx].detach().cpu().numpy()
         
         
-        
-        # 聚合预测和标签（若需全局指标）
+        # 聚合预测和标签（若需全局指标）i.e. predictions_tensor: [local_batch_size, ...] -> [total_samples, ...]
         predictions_tensor = torch.cat(predictions, dim=0)
         
         if DIST_WRAPPER.world_size > 1:
@@ -546,17 +571,28 @@ def main() -> None:
     configs_base["triangle_multiplicative"] = os.environ.get(
         "TRIANGLE_MULTIPLICATIVE", "cuequivariance"
     )
+    if (
+        configs_base["triangle_multiplicative"] == "cuequivariance"
+        and importlib.util.find_spec("cuequivariance_torch") is None
+    ):
+        logging.warning(
+            "cuequivariance_torch is not installed; falling back to triangle_multiplicative=torch"
+        )
+        configs_base["triangle_multiplicative"] = "torch"
     configs = {**configs_base, **{"data": data_configs}, **inference_configs}
+    arg_str = parse_sys_args()
     configs = parse_configs(
         configs=configs,
-        arg_str=parse_sys_args(),
+        arg_str=arg_str,
         fill_required_with_null=True,
     )
-    configs.model_name = "protenix_mini_esm_v0.5.0"
+    if "--model_name" not in arg_str:
+        configs.model_name = "protenix_mini_default_v0.5.0"
+    if "--infer_setting.chunk_size" not in arg_str:
+        configs.infer_setting.chunk_size = None
     model_name = configs.model_name
     configs.use_msa = False
-    configs.esm.enable = True # Debug
-    download_infercence_cache(configs)
+    download_inference_cache(configs)
     
     _, model_size, model_feature, model_version = model_name.split("_")
     logger.info(

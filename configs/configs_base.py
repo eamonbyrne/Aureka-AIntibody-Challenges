@@ -59,6 +59,7 @@ basic_configs = {
     "valid_json_path": "",
     "test_json_path": "",
     "predict_json_path": "",
+    "max_samples": -1,
     "lr":1e-4,
     "batchsize":1,
     "test_batch":1,

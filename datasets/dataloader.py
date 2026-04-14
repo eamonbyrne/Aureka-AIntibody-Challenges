@@ -91,14 +91,17 @@ def get_dataloader(configs: Any, batchsize=1, shuffle=False, input_json_path="",
             rank=DIST_WRAPPER.rank,
             shuffle=shuffle,
         )
-    dataloader = DataLoader(
-        dataset=distilled_dataset,
-        batch_size=batchsize,
-        sampler=sampler,
+    dataloader_kwargs = {
+        "dataset": distilled_dataset,
+        "batch_size": batchsize,
+        "sampler": sampler,
         # collate_fn=collate_fn_custom,
-        collate_fn=collate_padding_speed_fn,
-        num_workers=configs.num_workers,
-        prefetch_factor=2,
-        drop_last=drop_last,
-    )
+        "collate_fn": collate_padding_speed_fn,
+        "num_workers": configs.num_workers,
+        "drop_last": drop_last,
+    }
+    if configs.num_workers > 0:
+        dataloader_kwargs["prefetch_factor"] = 2
+
+    dataloader = DataLoader(**dataloader_kwargs)
     return dataloader
